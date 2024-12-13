@@ -28,14 +28,80 @@ deploy_master() {
     mkdir -p /opt/asn-master
     cd /opt/asn-master
     
-    # 复制配置文件
-    cp docker-compose.master.yml docker-compose.yml
+    # 创建 docker-compose.yml
+    cat > docker-compose.yml << 'EOF'
+    version: '3.8'
+    
+    services:
+      web-master:
+        build: 
+          context: .
+          dockerfile: Dockerfile
+        ports:
+          - "80:8000"
+        environment:
+          - NODE_ROLE=master
+          - NODE_NAME=master.asn.local
+          - MASTER_URL=main.curl.im
+          - DATABASE_URL=mysql+pymysql://user:password@db/asn_scanner
+          - REDIS_URL=redis://redis:6379/0
+          - SECRET_KEY=${SECRET_KEY}
+        depends_on:
+          - db
+          - redis
+        restart: always
+    
+      db:
+        image: mysql:8.0
+        environment:
+          - MYSQL_DATABASE=asn_scanner
+          - MYSQL_USER=user
+          - MYSQL_PASSWORD=password
+          - MYSQL_ROOT_PASSWORD=rootpassword
+        volumes:
+          - mysql_data:/var/lib/mysql
+        restart: always
+    
+      redis:
+        image: redis:6.2-alpine
+        restart: always
+    
+    volumes:
+      mysql_data:
+    EOF
     
     # 配置环境变量
     if [ ! -f .env ]; then
         echo "SECRET_KEY=$(openssl rand -hex 32)" > .env
         echo -e "${YELLOW}已生成随机SECRET_KEY${NC}"
     fi
+    
+    # 创建 Dockerfile
+    cat > Dockerfile << 'EOF'
+    FROM python:3.9-slim
+    
+    WORKDIR /app
+    
+    RUN apt-get update && apt-get install -y \
+        gcc \
+        libpq-dev \
+        && rm -rf /var/lib/apt/lists/*
+    
+    COPY requirements.txt .
+    RUN pip install --no-cache-dir -r requirements.txt
+    
+    COPY . .
+    
+    ENV PYTHONPATH=/app
+    ENV PYTHONUNBUFFERED=1
+    
+    EXPOSE 8000
+    
+    CMD ["uvicorn", "api.main:app", "--host", "0.0.0.0", "--port", "8000"]
+    EOF
+    
+    # 复制必要文件
+    mkdir -p {api,models,scanner,utils}
     
     # 启动服务
     docker-compose up -d
@@ -67,11 +133,50 @@ deploy_scanner() {
     mkdir -p /opt/asn-scanner-$worker_id
     cd /opt/asn-scanner-$worker_id
     
-    # 复制配置文件
-    cp docker-compose.scanner.yml docker-compose.yml
+    # 创建 docker-compose.yml
+    cat > docker-compose.yml << 'EOF'
+    version: '3.8'
+    
+    services:
+      scanner:
+        build:
+          context: .
+          dockerfile: Dockerfile.scanner
+        environment:
+          - NODE_ROLE=worker
+          - WORKER_ID=${WORKER_ID:-1}
+          - MASTER_URL=main.curl.im
+        restart: always
+    EOF
+    
+    # 创建 Dockerfile.scanner
+    cat > Dockerfile.scanner << 'EOF'
+    FROM python:3.9-slim
+    
+    WORKDIR /app
+    
+    RUN apt-get update && apt-get install -y \
+        gcc \
+        libpq-dev \
+        nmap \
+        masscan \
+        && rm -rf /var/lib/apt/lists/*
+    
+    COPY requirements.scanner.txt requirements.txt
+    RUN pip install --no-cache-dir -r requirements.txt
+    
+    COPY scanner/ scanner/
+    COPY utils/ utils/
+    COPY config.py .
+    
+    CMD ["python", "-m", "scanner.worker"]
+    EOF
     
     # 配置环境变量
     echo "WORKER_ID=$worker_id" > .env
+    
+    # 创建必要目录和文件
+    mkdir -p {scanner,utils}
     
     # 启动服务
     docker-compose up -d
