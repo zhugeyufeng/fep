@@ -1,0 +1,12 @@
+version: '3.8'
+
+services:
+  scanner:
+    build:
+      context: .
+      dockerfile: Dockerfile.scanner
+    environment:
+      - NODE_ROLE=worker
+      - WORKER_ID=${WORKER_ID:-1}  # 每个扫描节点需要不同的ID
+      - MASTER_URL=main.curl.im
+    restart: always 

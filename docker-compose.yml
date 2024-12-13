@@ -1,0 +1,71 @@
+version: '3.8'
+
+services:
+  # 中心节点服务
+  web-master:
+    build: 
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "80:8000"
+    environment:
+      - NODE_ROLE=master
+      - NODE_NAME=master.asn.local
+      - MASTER_URL=main.curl.im
+      - DATABASE_URL=mysql+pymysql://user:password@db/asn_scanner
+      - REDIS_URL=redis://redis:6379/0
+      - SECRET_KEY=${SECRET_KEY}
+    depends_on:
+      - db
+      - redis
+    networks:
+      - asn_network
+
+  # 扫描节点，移除web服务，只保留扫描功能
+  scanner-node-1:
+    build:
+      context: .
+      dockerfile: Dockerfile.scanner
+    environment:
+      - NODE_ROLE=worker
+      - WORKER_ID=1
+      - MASTER_URL=main.curl.im
+      - REDIS_URL=redis://redis:6379/0
+    networks:
+      - asn_network
+
+  scanner-node-2:
+    build:
+      context: .
+      dockerfile: Dockerfile.scanner
+    environment:
+      - NODE_ROLE=worker
+      - WORKER_ID=2
+      - MASTER_URL=main.curl.im
+      - REDIS_URL=redis://redis:6379/0
+    networks:
+      - asn_network
+
+  db:
+    image: mysql:8.0
+    environment:
+      - MYSQL_DATABASE=asn_scanner
+      - MYSQL_USER=user
+      - MYSQL_PASSWORD=password
+      - MYSQL_ROOT_PASSWORD=rootpassword
+    volumes:
+      - mysql_data:/var/lib/mysql
+    networks:
+      - asn_network
+
+  redis:
+    image: redis:6.2-alpine
+    networks:
+      - asn_network
+
+volumes:
+  mysql_data:
+
+networks:
+  asn_network:
+    driver: bridge
